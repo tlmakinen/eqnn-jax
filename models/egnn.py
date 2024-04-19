@@ -8,6 +8,8 @@ from jraph._src import utils
 from models.utils.graph_utils import fourier_features
 from models.mlp import MLP
 
+from models.fishnet_nn import *
+
 
 def get_edge_mlp_updates(
     d_hidden,
@@ -232,6 +234,7 @@ class EGNN(nn.Module):
     d_hidden: int = 64
     n_layers: int = 3
     activation: str = "gelu"
+    n_p: int = 10
 
     soft_edges: bool = False  # Scale edges by a learnable function
     use_fourier_features: bool = True
@@ -278,9 +281,13 @@ class EGNN(nn.Module):
                 f"Invalid message passing aggregation function {self.message_passing_agg}"
             )
 
-        aggregate_edges_for_nodes_fn = getattr(
-            utils, f"segment_{self.message_passing_agg}"
-        )
+        if self.message_passing_agg == "fishnets":
+            aggregate_edges_for_nodes_fn = lambda d,n,s : fishnets_aggregation(self.n_p, d, n, s)
+
+        else:
+            aggregate_edges_for_nodes_fn = getattr(
+                utils, f"segment_{self.message_passing_agg}"
+            )
 
         # Apply message-passing rounds
         for _ in range(self.message_passing_steps):
@@ -320,11 +327,17 @@ class EGNN(nn.Module):
             # Aggregate residual node features; only use positions, optionally
 
             if self.readout_agg not in ["sum", "mean", "max"]:
-                raise ValueError(
-                    f"Invalid global aggregation function {self.message_passing_agg}"
-                )
 
-            readout_agg_fn = getattr(jnp, f"{self.readout_agg}")
+                if self.readout_agg == "fishnets":
+                    readout_agg_fn = lambda d,s,n: fishnets_aggregation(self.n_p, d, s, n)
+
+                else:
+                    raise ValueError(
+                        f"Invalid global aggregation function {self.message_passing_agg}"
+                    )
+            else:
+                readout_agg_fn = getattr(jnp, f"{self.readout_agg}")
+                
             if self.readout_only_positions:
                 agg_nodes = readout_agg_fn(processed_graphs.nodes[:, :3], axis=0)
             else:
